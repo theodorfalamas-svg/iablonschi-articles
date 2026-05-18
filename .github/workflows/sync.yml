@@ -1,0 +1,25 @@
+name: Sync Articles
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 10 * * *'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run sync
+        run: node sync.js
+        env:
+          SHEETS_URL: ${{ secrets.SHEETS_URL }}
+
+      - name: Commit and push
+        run: |
+          git config user.name 'GitHub Actions'
+          git config user.email 'actions@github.com'
+          git add articles.json
+          git diff --staged --quiet || git commit -m 'Sync articles'
+          git push
