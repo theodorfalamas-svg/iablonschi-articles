@@ -6,11 +6,13 @@ const SHEETS_URL = process.env.SHEETS_URL;
 function fetchText(url) {
   return new Promise((resolve, reject) => {
     https.get(url, res => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return fetchText(res.headers.location).then(resolve).catch(reject);
+      }
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => resolve(data));
-      res.on('error', reject);
-    });
+    }).on('error', reject);
   });
 }
 
