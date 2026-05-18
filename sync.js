@@ -1,76 +1,68 @@
-const https = require('https');
 const fs = require('fs');
 
 const SHEETS_URL = process.env.SHEETS_URL;
 
-function fetchText(url) {
-  return new Promise((resolve, reject) => {
-    https.get(url, res => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return fetchText(res.headers.location).then(resolve).catch(reject);
-      }
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => resolve(data));
-    }).on('error', reject);
-  });
-}
-
 function parseCSV(text) {
   const rows = [];
-  let i = 0, n = text.length;
+  let i = (text.charCodeAt(0) === 0xFEFF) ? 1 : 0; // strip BOM
+  const n = text.length;
   while (i < n) {
     const row = [];
-    while (i < n && text[i] !== '\n' && text[i] !== '\r') {
+    while (i < n) {
       let cell = '';
       if (text[i] === '"') {
         i++;
         while (i < n) {
-          if (text[i] === '"' && text[i + 1] === '"') { cell += '"'; i += 2; }
+          if (text[i] === '"' && text[i+1] === '"') { cell += '"'; i += 2; }
           else if (text[i] === '"') { i++; break; }
-          else { cell += text[i++]; }
+          else cell += text[i++];
         }
       } else {
         while (i < n && text[i] !== ',' && text[i] !== '\n' && text[i] !== '\r') cell += text[i++];
       }
       row.push(cell);
-      if (text[i] === ',') i++;
+      if (text[i] === ',') { i++; continue; }
+      break;
     }
     if (text[i] === '\r') i++;
     if (text[i] === '\n') i++;
-    if (row.length > 0 && row.some(c => c.trim())) rows.push(row);
+    if (row.some(c => c.trim())) rows.push(row);
   }
   return rows;
 }
 
 async function main() {
+  if (!SHEETS_URL) { console.error('SHEETS_URL not set'); process.exit(1); }
+
   const current = JSON.parse(fs.readFileSync('articles.json', 'utf8'));
   const currentIds = new Set(current.map(a => a.id));
 
-  const csvText = await fetchText(SHEETS_URL);
+  const res = await fetch(SHEETS_URL);
+  if (!res.ok) throw new Error(`Sheets fetch failed: HTTP ${res.status}`);
+  const csvText = await res.text();
+
   const rows = parseCSV(csvText);
-  if (rows.length < 2) { console.log('No data from Sheets'); return; }
+  if (rows.length < 2) { console.log('No data in Sheets'); return; }
 
   const headers = rows[0].map(h => h.trim().toLowerCase());
   const col = k => headers.indexOf(k);
 
   const newArticles = rows.slice(1)
-    .filter(r => r[col('id')] && r[col('title')])
     .map(r => ({
-      id:         (r[col('id')] || '').trim(),
-      title:      (r[col('title')] || '').trim(),
-      title_en:   (r[col('title_en')] || '').trim(),
-      date:       (r[col('date')] || '').trim(),
-      dateISO:    (r[col('dateiso')] || r[col('date_iso')] || '').trim(),
-      category:   (r[col('category')] || 'corporate').trim(),
-      excerpt:    (r[col('excerpt')] || '').trim(),
+      id:         (r[col('id')]         || '').trim(),
+      title:      (r[col('title')]      || '').trim(),
+      title_en:   (r[col('title_en')]   || '').trim(),
+      date:       (r[col('date')]       || '').trim(),
+      dateISO:    (r[col('dateiso')]    || r[col('date_iso')] || '').trim(),
+      category:   (r[col('category')]   || 'corporate').trim(),
+      excerpt:    (r[col('excerpt')]    || '').trim(),
       excerpt_en: (r[col('excerpt_en')] || '').trim(),
-      body:       (r[col('content')] || r[col('body')] || '').trim(),
+      body:       (r[col('content')]    || r[col('body')]     || '').trim(),
       body_en:    (r[col('content_en')] || r[col('body_en')] || '').trim(),
-      image:      (r[col('image')] || '').trim(),
-      url:        (r[col('url')] || r[col('link')] || '').trim(),
+      image:      (r[col('image')]      || '').trim(),
+      url:        (r[col('url')]        || r[col('link')]     || '').trim(),
     }))
-    .filter(a => !currentIds.has(a.id));
+    .filter(a => a.id && a.title && !currentIds.has(a.id));
 
   if (!newArticles.length) { console.log('No new articles'); return; }
 
@@ -84,7 +76,7 @@ async function main() {
   });
 
   fs.writeFileSync('articles.json', JSON.stringify(merged, null, 2));
-  console.log(`Added ${newArticles.length} articles. Total: ${merged.length}`);
+  console.log(`Added ${newArticles.length} new articles. Total: ${merged.length}`);
 }
 
-main().catch(console.error);
+main().catch(e => { console.error(e.message); process.exit(1); });
